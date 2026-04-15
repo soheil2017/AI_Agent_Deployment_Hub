@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  LangGraph RAG — Lambda + API Gateway HTTP API.
+  Uses a LangGraph StateGraph (retrieve → generate) with FAISS (loaded from S3)
+  to answer questions over a private knowledge base.
+
+Globals:
+  Function:
+    Timeout: 60           # seconds — single LLM call, no tool loops
+    MemorySize: 512       # MB — FAISS index + LangGraph overhead
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        LOG_LEVEL: INFO
+        LLM_MODEL: gpt-4o-mini
+        TOP_K: "5"
+
+Parameters:
+  OpenAIApiKey:
+    Type: String
+    NoEcho: true
+    Description: OpenAI API key (stored as a plain env var; use SSM/Secrets Manager for production)
+
+  S3Bucket:
+    Type: String
+    Description: S3 bucket that stores the FAISS index and raw documents
+
+  IndexKey:
+    Type: String
+    Default: faiss_index/index.faiss
+    Description: S3 key for the FAISS index file
+
+  ChunksKey:
+    Type: String
+    Default: faiss_index/chunks.pkl
+    Description: S3 key for the pickled chunk list
+
+Resources:
+
+  # ── IAM Role ──────────────────────────────────────────────────────────────
+  LangGraphRAGRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3ReadAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${S3Bucket}"
+                  - !Sub "arn:aws:s3:::${S3Bucket}/*"
+
+  # ── Lambda Function ────────────────────────────────────────────────────────
+  LangGraphRAGFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: langgraph-rag
+      CodeUri: src/
+      Handler: lambda_function.handler
+      Role: !GetAtt LangGraphRAGRole.Arn
+      Environment:
+        Variables:
+          OPENAI_API_KEY: !Ref OpenAIApiKey
+          S3_BUCKET: !Ref S3Bucket
+          INDEX_KEY: !Ref IndexKey
+          CHUNKS_KEY: !Ref ChunksKey
+      Events:
+        QueryApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref LangGraphRAGApi
+            Path: /query
+            Method: POST
+        HealthApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref LangGraphRAGApi
+            Path: /health
+            Method: GET
+
+  # ── HTTP API Gateway ───────────────────────────────────────────────────────
+  LangGraphRAGApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: langgraph-rag-api
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API base URL
+    Value: !Sub "https://${LangGraphRAGApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  FunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt LangGraphRAGFunction.Arn
