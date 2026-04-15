@@ -1,6 +1,6 @@
 # AI Agent Deployment Hub
 
-A collection of production-ready AI agent architectures deployed on AWS. Each project demonstrates a different agentic pattern, tooling stack, and deployment approach — from custom RAG pipelines to fully managed AWS-native solutions.
+A collection of production-ready AI agent architectures deployed on AWS. Each project demonstrates a different agentic pattern, tooling stack, and deployment approach, from custom RAG pipelines to fully managed AWS-native solutions.
 
 ## Projects
 
