@@ -54,9 +54,9 @@ User → API Gateway → Lambda
 
 ## Architecture Comparison
 
-### Agentic_RAG vs Bedrock_RAG_Agent
+### Agentic_RAG (Lambda) vs Bedrock_RAG_Agent (Lambda)
 
-| | Agentic_RAG | Bedrock_RAG_Agent |
+| | Agentic_RAG (Lambda) | Bedrock_RAG_Agent (Lambda) |
 |---|---|---|
 | **LLM** | OpenAI gpt-4o | Claude 3.5 Sonnet (Bedrock) |
 | **Embeddings** | OpenAI text-embedding-3-small | Amazon Titan Embeddings v2 |
@@ -75,9 +75,9 @@ User → API Gateway → Lambda
 
 ### Key Trade-off
 
-> **Agentic_RAG** gives you maximum flexibility — swap the LLM, tune the retriever, change the chunking strategy — at the cost of more code to own and operate.
+> **Agentic_RAG (Lambda)** gives you maximum flexibility — swap the LLM, tune the retriever, change the chunking strategy — at the cost of more code to own and operate.
 >
-> **Bedrock_RAG_Agent** eliminates the RAG plumbing entirely and is deeply integrated with AWS IAM/security, but the OpenSearch Serverless cost floor makes it unsuitable for experimentation or low-traffic use cases.
+> **Bedrock_RAG_Agent (Lambda)** eliminates the RAG plumbing entirely and is deeply integrated with AWS IAM/security, but the OpenSearch Serverless cost floor makes it unsuitable for experimentation or low-traffic use cases.
 
 ---
 
