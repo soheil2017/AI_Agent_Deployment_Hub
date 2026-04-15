@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+
+# Environment / secrets
+.env
+*.env
+
+# AWS SAM build artifacts
+.aws-sam/
+samconfig.toml
+
+# FAISS index files (generated; stored in S3)
+*.faiss
+*.pkl
+
+# macOS
+.DS_Store
+
+# JetBrains IDEs
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/

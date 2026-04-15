@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  Agentic RAG — Lambda + API Gateway HTTP API.
+  The Lambda function uses OpenAI tool calling + FAISS (loaded from S3)
+  to answer questions over a private knowledge base.
+
+Globals:
+  Function:
+    Timeout: 120          # seconds — allow time for multiple OpenAI calls
+    MemorySize: 1024      # MB — FAISS index may be large
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        LOG_LEVEL: INFO
+        LLM_MODEL: gpt-4o
+        TOP_K: "5"
+        MAX_TOOL_ROUNDS: "3"
+        CHUNK_SIZE: "512"
+        CHUNK_OVERLAP: "64"
+
+Parameters:
+  OpenAIApiKey:
+    Type: String
+    NoEcho: true
+    Description: OpenAI API key (stored as a plain env var; use SSM/Secrets Manager for production)
+
+  S3Bucket:
+    Type: String
+    Description: S3 bucket that stores the FAISS index and raw documents
+
+  IndexKey:
+    Type: String
+    Default: faiss_index/index.faiss
+    Description: S3 key for the FAISS index file
+
+  ChunksKey:
+    Type: String
+    Default: faiss_index/chunks.pkl
+    Description: S3 key for the pickled chunk list
+
+Resources:
+
+  # ── IAM Role ──────────────────────────────────────────────────────────────
+  AgenticRAGRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3ReadAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${S3Bucket}"
+                  - !Sub "arn:aws:s3:::${S3Bucket}/*"
+
+  # ── Lambda Function ────────────────────────────────────────────────────────
+  AgenticRAGFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: agentic-rag
+      CodeUri: src/
+      Handler: lambda_function.handler
+      Role: !GetAtt AgenticRAGRole.Arn
+      Environment:
+        Variables:
+          OPENAI_API_KEY: !Ref OpenAIApiKey
+          S3_BUCKET: !Ref S3Bucket
+          INDEX_KEY: !Ref IndexKey
+          CHUNKS_KEY: !Ref ChunksKey
+      Events:
+        QueryApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AgenticRAGApi
+            Path: /query
+            Method: POST
+        HealthApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AgenticRAGApi
+            Path: /health
+            Method: GET
+
+  # ── HTTP API Gateway ───────────────────────────────────────────────────────
+  AgenticRAGApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: agentic-rag-api
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API base URL
+    Value: !Sub "https://${AgenticRAGApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  FunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt AgenticRAGFunction.Arn
