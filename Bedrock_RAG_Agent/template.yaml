@@ -1,0 +1,301 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  Bedrock RAG Agent — API Gateway + Lambda + Bedrock Agent + Knowledge Base
+  (OpenSearch Serverless vector store, Titan embeddings, Claude 3.5 Sonnet).
+  No OpenAI key required.
+
+# ── Parameters ────────────────────────────────────────────────────────────────
+Parameters:
+  CollectionName:
+    Type: String
+    Default: bedrock-rag-kb
+    Description: >
+      OpenSearch Serverless collection name (lowercase, hyphens only, max 32 chars).
+
+# ── Globals ───────────────────────────────────────────────────────────────────
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 60
+    MemorySize: 256
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        LOG_LEVEL: INFO
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+Resources:
+
+  # ── S3 bucket for source documents ──────────────────────────────────────────
+  DocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-docs-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+
+  # ── OpenSearch Serverless (vector store) ────────────────────────────────────
+  OSSEncryptionPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: !Sub "${AWS::StackName}-enc"
+      Type: encryption
+      Policy: !Sub >-
+        {"Rules":[{"ResourceType":"collection","Resource":["collection/${CollectionName}"]}],"AWSOwnedKey":true}
+
+  OSSNetworkPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: !Sub "${AWS::StackName}-net"
+      Type: network
+      Policy: !Sub >-
+        [{"Rules":[{"ResourceType":"collection","Resource":["collection/${CollectionName}"]},{"ResourceType":"dashboard","Resource":["collection/${CollectionName}"]}],"AllowFromPublic":true}]
+
+  OSSCollection:
+    Type: AWS::OpenSearchServerless::Collection
+    DependsOn:
+      - OSSEncryptionPolicy
+      - OSSNetworkPolicy
+    Properties:
+      Name: !Ref CollectionName
+      Type: VECTORSEARCH
+      Description: Vector store for Bedrock Knowledge Base
+
+  # ── IAM Role — Knowledge Base ────────────────────────────────────────────────
+  BedrockKBRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-kb-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: KBPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EmbedModel
+                Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0"
+              - Sid: S3Read
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt DocumentsBucket.Arn
+                  - !Sub "${DocumentsBucket.Arn}/*"
+              - Sid: OSSAccess
+                Effect: Allow
+                Action: aoss:APIAccessAll
+                Resource: !GetAtt OSSCollection.Arn
+
+  # Grant the KB role data-plane access to the OSS collection
+  OSSDataAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Properties:
+      Name: !Sub "${AWS::StackName}-data"
+      Type: data
+      Policy: !Sub >-
+        [{"Rules":[{"Resource":["collection/${CollectionName}"],"Permission":["aoss:CreateCollectionItems","aoss:DeleteCollectionItems","aoss:UpdateCollectionItems","aoss:DescribeCollectionItems"],"ResourceType":"collection"},{"Resource":["index/${CollectionName}/*"],"Permission":["aoss:CreateIndex","aoss:DeleteIndex","aoss:UpdateIndex","aoss:DescribeIndex","aoss:ReadDocument","aoss:WriteDocument"],"ResourceType":"index"}],"Principal":["${BedrockKBRole.Arn}"]}]
+
+  # ── Bedrock Knowledge Base ───────────────────────────────────────────────────
+  BedrockKnowledgeBase:
+    Type: AWS::Bedrock::KnowledgeBase
+    DependsOn: OSSDataAccessPolicy
+    Properties:
+      Name: !Sub "${AWS::StackName}-kb"
+      RoleArn: !GetAtt BedrockKBRole.Arn
+      KnowledgeBaseConfiguration:
+        Type: VECTOR
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0"
+      StorageConfiguration:
+        Type: OPENSEARCH_SERVERLESS
+        OpensearchServerlessConfiguration:
+          CollectionArn: !GetAtt OSSCollection.Arn
+          VectorIndexName: bedrock-knowledge-base-default-index
+          FieldMapping:
+            VectorField: bedrock-knowledge-base-default-vector
+            TextField: AMAZON_BEDROCK_TEXT_CHUNK
+            MetadataField: AMAZON_BEDROCK_METADATA
+
+  # ── Bedrock Data Source (S3 → KB) ────────────────────────────────────────────
+  BedrockDataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      Name: !Sub "${AWS::StackName}-datasource"
+      KnowledgeBaseId: !Ref BedrockKnowledgeBase
+      DataSourceConfiguration:
+        Type: S3
+        S3Configuration:
+          BucketArn: !GetAtt DocumentsBucket.Arn
+      VectorIngestionConfiguration:
+        ChunkingConfiguration:
+          ChunkingStrategy: FIXED_SIZE
+          FixedSizeChunkingConfiguration:
+            MaxTokens: 512
+            OverlapPercentage: 20
+
+  # ── IAM Role — Bedrock Agent ─────────────────────────────────────────────────
+  BedrockAgentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-agent-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: AgentPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: InvokeFoundationModel
+                Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0"
+              - Sid: RetrieveFromKB
+                Effect: Allow
+                Action:
+                  - bedrock:Retrieve
+                  - bedrock:RetrieveAndGenerate
+                Resource: !GetAtt BedrockKnowledgeBase.KnowledgeBaseArn
+
+  # ── Bedrock Agent ────────────────────────────────────────────────────────────
+  BedrockAgent:
+    Type: AWS::Bedrock::Agent
+    Properties:
+      AgentName: !Sub "${AWS::StackName}-agent"
+      AgentResourceRoleArn: !GetAtt BedrockAgentRole.Arn
+      FoundationModel: anthropic.claude-3-5-sonnet-20241022-v2:0
+      Instruction: |
+        You are a knowledgeable assistant with access to a private knowledge base.
+        When a user asks a question:
+        1. Search the knowledge base for relevant information.
+        2. Use the retrieved context to provide an accurate, concise answer.
+        3. If the knowledge base does not contain enough information, say so clearly
+           and indicate what you do and do not know.
+        Always ground your answers in the retrieved context.
+      KnowledgeBases:
+        - KnowledgeBaseId: !Ref BedrockKnowledgeBase
+          Description: >
+            Primary knowledge base. Search it to answer any user question about
+            the available documents.
+          KnowledgeBaseState: ENABLED
+      AutoPrepare: true
+
+  BedrockAgentAlias:
+    Type: AWS::Bedrock::AgentAlias
+    Properties:
+      AgentId: !Ref BedrockAgent
+      AgentAliasName: live
+
+  # ── IAM Role — Lambda ────────────────────────────────────────────────────────
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: InvokeBedrockAgent
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: bedrock:InvokeAgent
+                Resource: !Sub
+                  - "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${AgentId}/${AliasId}"
+                  - AgentId: !Ref BedrockAgent
+                    AliasId: !GetAtt BedrockAgentAlias.AgentAliasId
+
+  # ── Lambda Function ──────────────────────────────────────────────────────────
+  QueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-query"
+      CodeUri: src/
+      Handler: lambda_function.handler
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          BEDROCK_AGENT_ID: !Ref BedrockAgent
+          BEDROCK_AGENT_ALIAS_ID: !GetAtt BedrockAgentAlias.AgentAliasId
+      Events:
+        QueryApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /query
+            Method: POST
+        HealthApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /health
+            Method: GET
+
+  # ── HTTP API Gateway ─────────────────────────────────────────────────────────
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: !Sub "${AWS::StackName}-api"
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+
+# ── Outputs ───────────────────────────────────────────────────────────────────
+Outputs:
+  ApiUrl:
+    Description: HTTP API base URL
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  DocumentsBucket:
+    Description: Upload your .txt / .pdf / .docx documents here
+    Value: !Ref DocumentsBucket
+
+  KnowledgeBaseId:
+    Description: Bedrock Knowledge Base ID (needed for sync_kb.py)
+    Value: !Ref BedrockKnowledgeBase
+
+  DataSourceId:
+    Description: Bedrock Data Source ID (needed for sync_kb.py)
+    Value: !Ref BedrockDataSource
+
+  AgentId:
+    Description: Bedrock Agent ID
+    Value: !Ref BedrockAgent
+
+  AgentAliasId:
+    Description: Bedrock Agent Alias ID
+    Value: !GetAtt BedrockAgentAlias.AgentAliasId
