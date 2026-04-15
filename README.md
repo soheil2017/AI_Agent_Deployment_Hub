@@ -8,6 +8,7 @@ A collection of production-ready AI agent architectures deployed on AWS. Each pr
 |---|---|---|---|---|
 | [`Agentic_RAG/`](#agentic_rag) | Agentic RAG | OpenAI gpt-4o | Custom FAISS + S3 | Lambda + API Gateway (SAM) |
 | [`Bedrock_RAG_Agent/`](#bedrock_rag_agent) | Agentic RAG | Claude 3.5 Sonnet (Bedrock) | Bedrock Knowledge Base | Lambda + API Gateway (SAM) |
+| [`LangGraph_RAG/`](#langgraph_rag) | Graph RAG | OpenAI gpt-4o-mini | Custom FAISS + S3 | Lambda + API Gateway (SAM) |
 | `Knowledge_Graph_Agent/` | Knowledge Graph Agent | — | — | — |
 | `MCP-Powered_LLM_Agent/` | MCP Agent | — | — | — |
 | `multi-agent/` | Multi-Agent | — | — | — |
@@ -52,32 +53,60 @@ User → API Gateway → Lambda
 
 ---
 
+## LangGraph_RAG
+
+**Stack:** OpenAI gpt-4o-mini · FAISS · S3 · LangGraph · AWS Lambda · API Gateway · SAM
+
+A RAG service built as an explicit [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph`. The graph is compiled once at module level and reused across Lambda warm starts. The flow is fixed (retrieve → generate) but the typed state and graph structure make it trivial to add grading, query rewriting, or multi-agent patterns later.
+
+```
+User → API Gateway → Lambda
+                        │
+                    graph.py (LangGraph StateGraph, compiled at module level)
+                        │
+              ┌─────────┴──────────┐
+           retrieve             generate
+              │                     │
+          retriever.py ──► FAISS  gpt-4o-mini
+                           (cached from S3)
+```
+
+**Graph topology:** `START → retrieve → generate → END`
+
+**When to use:** You want the simplicity of a fixed RAG pipeline but with an explicit, visualisable, and extensible graph structure — a natural stepping stone toward CRAG or multi-agent patterns.
+
+---
+
 ## Architecture Comparison
 
-### Agentic_RAG (Lambda) vs Bedrock_RAG_Agent (Lambda)
+### All three projects compared
 
-| | Agentic_RAG (Lambda) | Bedrock_RAG_Agent (Lambda) |
-|---|---|---|
-| **LLM** | OpenAI gpt-4o | Claude 3.5 Sonnet (Bedrock) |
-| **Embeddings** | OpenAI text-embedding-3-small | Amazon Titan Embeddings v2 |
-| **Vector store** | FAISS (self-managed, cached in /tmp) | OpenSearch Serverless (fully managed) |
-| **RAG pipeline** | Custom (retriever.py + agent.py) | Bedrock Knowledge Base (managed) |
-| **Agentic loop** | Manual OpenAI function calling loop | Built into Bedrock Agent |
-| **Tool calling** | OpenAI `tools` API | Bedrock Agent Action Groups |
-| **External API key** | OpenAI API key required | None — IAM only |
-| **Code to maintain** | ~300 lines | ~80 lines |
-| **Chunking control** | Full (size, overlap, strategy) | Limited (fixed-size or semantic) |
-| **Retrieval control** | Full (re-rank, filter, top-k) | Limited |
-| **Cold start** | Downloads FAISS index from S3 | No index to load |
-| **Index update** | Re-run indexer.py, re-upload | Upload to S3 + trigger sync job |
-| **Cost model** | Pay per OpenAI API call | Pay per token + OSS (~$700/mo min) |
-| **Best for** | Full control, any LLM, cost-sensitive | Managed infra, AWS-native, production |
+| | Agentic_RAG | LangGraph_RAG | Bedrock_RAG_Agent |
+|---|---|---|---|
+| **LLM** | OpenAI gpt-4o | OpenAI gpt-4o-mini | Claude 3.5 Sonnet (Bedrock) |
+| **Embeddings** | OpenAI text-embedding-3-small | OpenAI text-embedding-3-small | Amazon Titan Embeddings v2 |
+| **Vector store** | FAISS (self-managed, /tmp) | FAISS (self-managed, /tmp) | OpenSearch Serverless (managed) |
+| **RAG pipeline** | Custom (retriever.py + agent.py) | LangGraph StateGraph | Bedrock Knowledge Base (managed) |
+| **Flow control** | Dynamic OpenAI tool-calling loop | Fixed graph (retrieve → generate) | Built into Bedrock Agent |
+| **Flow structure** | Implicit (agent decides) | Explicit typed StateGraph | Opaque (managed) |
+| **Extensibility** | Add OpenAI tools | Add graph nodes / edges | Limited to Bedrock features |
+| **Visualisable** | No | Yes (`draw_mermaid()`) | No |
+| **External API key** | OpenAI | OpenAI | None — IAM only |
+| **Lambda memory** | 1024 MB | 512 MB | 512 MB |
+| **Lambda timeout** | 120 s | 60 s | 60 s |
+| **Cold start** | Downloads FAISS from S3 | Downloads FAISS from S3 | No index to load |
+| **Index update** | Re-run indexer.py, re-upload | Re-run indexer.py, re-upload | Upload to S3 + sync job |
+| **Cost model** | Pay per OpenAI call | Pay per OpenAI call | Pay per token + OSS (~$700/mo min) |
+| **Code to maintain** | ~300 lines | ~200 lines | ~80 lines |
+| **Best for** | Full control, multi-turn loops | Explicit flow, easy to extend | Managed infra, AWS-native |
 
-### Key Trade-off
+### Key Trade-offs
 
-> **Agentic_RAG (Lambda)** gives you maximum flexibility — swap the LLM, tune the retriever, change the chunking strategy — at the cost of more code to own and operate.
+> **Agentic_RAG** gives maximum flexibility — the agent dynamically decides how many times to retrieve, supports multi-turn tool use, and can be extended with any OpenAI tool. Higher memory and timeout needed.
 >
-> **Bedrock_RAG_Agent (Lambda)** eliminates the RAG plumbing entirely and is deeply integrated with AWS IAM/security, but the OpenSearch Serverless cost floor makes it unsuitable for experimentation or low-traffic use cases.
+> **LangGraph_RAG** makes the data flow explicit and typed. Same FAISS/S3 stack as Agentic_RAG but the graph structure is self-documenting and easy to extend (add grading, rewriting, routing) without touching the Lambda handler.
+>
+> **Bedrock_RAG_Agent** eliminates all RAG plumbing and is deeply integrated with AWS IAM/security, but the OpenSearch Serverless cost floor makes it unsuitable for experimentation or low-traffic use cases.
 
 ---
 
@@ -100,6 +129,16 @@ AI_Agent_Deployment_Hub/
 │   │   └── lambda_function.py
 │   ├── scripts/
 │   │   └── sync_kb.py
+│   ├── template.yaml
+│   ├── requirements.txt
+│   └── .env.example
+│
+├── LangGraph_RAG/           # LangGraph StateGraph RAG + FAISS + S3
+│   ├── src/
+│   │   ├── lambda_function.py
+│   │   ├── graph.py
+│   │   ├── nodes.py
+│   │   └── retriever.py
 │   ├── template.yaml
 │   ├── requirements.txt
 │   └── .env.example
