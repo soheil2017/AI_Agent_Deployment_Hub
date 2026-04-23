@@ -120,23 +120,46 @@ The agent, chat logic, and UI require zero changes.
 
 ## Architecture Comparison
 
-### All projects compared
+### RAG Pattern Comparison
 
-| | Agentic_RAG | RAG_Agent_LangGraph | Bedrock_RAG_Agent | MCP-Powered_LLM_Agent |
-|---|---|---|---|---|
-| **LLM** | OpenAI gpt-4o | OpenAI gpt-4o-mini | Claude 3.5 Sonnet (Bedrock) | OpenAI gpt-4o-mini |
-| **Tool / RAG mechanism** | OpenAI function calling | LangGraph StateGraph | Bedrock Knowledge Base | MCP (JSON-RPC 2.0) |
-| **Vector store** | FAISS (S3-cached) | FAISS (S3-cached) | OpenSearch Serverless | None |
-| **Flow control** | Dynamic tool-calling loop | Conditional graph (retrieve → grade → generate/no_answer) | Managed by Bedrock Agent | Dynamic tool-calling loop |
-| **Flow structure** | Implicit (agent decides) | Explicit typed StateGraph | Opaque (managed) | Implicit (agent decides) |
-| **Extensibility** | Add OpenAI tools | Add graph nodes / edges | Limited to Bedrock features | Add 1 file + 1 config line |
-| **Memory** | None | None | None | Session-based (→ Vercel KV) |
-| **External API keys** | OpenAI | OpenAI | None — IAM only | OpenAI + Tavily |
-| **Deployment** | AWS Lambda + API Gateway | AWS Lambda + API Gateway | AWS Lambda + API Gateway | Vercel (Next.js) |
-| **Cold start** | Downloads FAISS from S3 | Downloads FAISS from S3 | No index to load | No index to load |
-| **Cost model** | Pay per OpenAI call | Pay per OpenAI call | Pay per token + OSS (~$700/mo min) | Pay per OpenAI call; Vercel free tier |
-| **Code to maintain** | ~300 lines | ~200 lines | ~80 lines | ~500 lines |
-| **Best for** | Full control, multi-turn loops | Explicit flow, conditional routing | Managed infra, AWS-native | Real-time tools, fast iteration, Vercel |
+> Focused comparison across the three RAG-based projects. Expand this table after each implementation.
+
+| | `Agentic_RAG` | `RAG_Agent_LangGraph` | `Agentic_GraphRAG` |
+|---|---|---|---|
+| **Status** | ✅ Done | ✅ Done | 🔲 Planned |
+| **LLM** | OpenAI gpt-4o | OpenAI gpt-4o-mini | — |
+| **Who controls flow** | LLM | Graph | LLM |
+| **Flow type** | Dynamic loop | Fixed conditional graph | Dynamic loop |
+| **Knowledge store** | Flat text chunks (FAISS) | Flat text chunks (FAISS) | Knowledge graph (Neo4j etc.) |
+| **Retrieval method** | Embedding similarity | Embedding similarity | Graph traversal + relationships |
+| **Tools** | 1: `search_knowledge_base` | None (nodes only) | Multiple: web search, DB, graph query |
+| **Tool selection** | LLM decides when & how many times | Graph always calls `retrieve` | LLM decides which tool & when |
+| **Grading / routing** | No — LLM self-judges | Yes — `grade_documents` node | — |
+| **Framework** | OpenAI tool-calling (raw) | LangGraph StateGraph | — |
+| **Memory** | None | None | — |
+| **Deployment** | AWS Lambda + API Gateway | AWS Lambda + API Gateway | — |
+| **Cold start** | Downloads FAISS from S3 | Downloads FAISS from S3 | — |
+| **Cost model** | Pay per OpenAI call | Pay per OpenAI call | — |
+| **Code to maintain** | ~300 lines | ~200 lines | — |
+| **Best for** | Multi-step reasoning over static docs | Explicit, visualisable pipeline | Relationship queries + real-time tools |
+
+### All Projects Compared
+
+| | Agentic_RAG | RAG_Agent_LangGraph | Bedrock_RAG_Agent | MCP-Powered_LLM_Agent | Agentic_GraphRAG |
+|---|---|---|---|---|---|
+| **LLM** | OpenAI gpt-4o | OpenAI gpt-4o-mini | Claude 3.5 Sonnet (Bedrock) | OpenAI gpt-4o-mini | — |
+| **Tool / RAG mechanism** | OpenAI function calling | LangGraph StateGraph | Bedrock Knowledge Base | MCP (JSON-RPC 2.0) | — |
+| **Vector store** | FAISS (S3-cached) | FAISS (S3-cached) | OpenSearch Serverless | None | Knowledge graph |
+| **Flow control** | Dynamic tool-calling loop | Conditional graph | Managed by Bedrock Agent | Dynamic tool-calling loop | — |
+| **Flow structure** | Implicit (agent decides) | Explicit typed StateGraph | Opaque (managed) | Implicit (agent decides) | — |
+| **Extensibility** | Add OpenAI tools | Add graph nodes / edges | Limited to Bedrock features | Add 1 file + 1 config line | — |
+| **Memory** | None | None | None | Session-based (→ Vercel KV) | — |
+| **External API keys** | OpenAI | OpenAI | None — IAM only | OpenAI + Tavily | — |
+| **Deployment** | AWS Lambda + API Gateway | AWS Lambda + API Gateway | AWS Lambda + API Gateway | Vercel (Next.js) | — |
+| **Cold start** | Downloads FAISS from S3 | Downloads FAISS from S3 | No index to load | No index to load | — |
+| **Cost model** | Pay per OpenAI call | Pay per OpenAI call | Pay per token + OSS (~$700/mo min) | Pay per OpenAI call; Vercel free tier | — |
+| **Code to maintain** | ~300 lines | ~200 lines | ~80 lines | ~500 lines | — |
+| **Best for** | Full control, multi-turn loops | Explicit flow, conditional routing | Managed infra, AWS-native | Real-time tools, fast iteration, Vercel | Relationship queries + multi-tool |
 
 ### Key Trade-offs
 
@@ -147,6 +170,8 @@ The agent, chat logic, and UI require zero changes.
 > **Bedrock_RAG_Agent** eliminates all RAG plumbing and is deeply integrated with AWS IAM/security, but the OpenSearch Serverless cost floor makes it unsuitable for experimentation or low-traffic use cases.
 >
 > **MCP-Powered_LLM_Agent** focuses on real-time external tools (not RAG over a static corpus). The MCP architecture makes adding new tools trivially easy — no changes to agent logic. Conversation memory and a streaming chat UI are included out of the box. Best choice when you want Vercel deployment and a growing tool set.
+>
+> **Agentic_GraphRAG** *(planned)* — combines a knowledge graph for structured relationship queries with dynamic LLM-driven tool selection (web search, database, graph query). Best for questions that require understanding connections between entities rather than finding similar text.
 
 ---
 
