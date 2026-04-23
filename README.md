@@ -10,7 +10,7 @@ A collection of production-ready AI agent architectures. Each project demonstrat
 | [`Bedrock_RAG_Agent/`](#bedrock_rag_agent) | Agentic RAG | Claude 3.5 Sonnet (Bedrock) | Bedrock Knowledge Base | Lambda + API Gateway (SAM) |
 | [`RAG_Agent_LangGraph/`](#rag_agent_langgraph) | RAG Agent | OpenAI gpt-4o-mini | Custom FAISS + S3 | Lambda + API Gateway (SAM) |
 | [`MCP-Powered_LLM_Agent/`](#mcp-powered_llm_agent) | MCP Tool Agent | OpenAI gpt-4o-mini | Web Search · Weather · Calculator (MCP) | Vercel (Next.js) |
-| `Knowledge_Graph_Agent/` | Knowledge Graph Agent | — | — | — |
+| `Agentic_GraphRAG/` | Agentic GraphRAG | — | — | — |
 | `multi-agent/` | Multi-Agent | — | — | — |
 
 ---
@@ -200,6 +200,6 @@ AI_Agent_Deployment_Hub/
 │   │   └── mcp-client.ts             # MCP client factory
 │   └── vercel.json
 │
-├── Knowledge_Graph_Agent/
+├── Agentic_GraphRAG/
 └── multi-agent/
 ```
