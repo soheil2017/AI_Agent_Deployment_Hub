@@ -8,7 +8,7 @@ A collection of production-ready AI agent architectures. Each project demonstrat
 |---|---|---|---|---|
 | [`Agentic_RAG/`](#agentic_rag) | Agentic RAG | OpenAI gpt-4o | Custom FAISS + S3 | Lambda + API Gateway (SAM) |
 | [`Bedrock_RAG_Agent/`](#bedrock_rag_agent) | Agentic RAG | Claude 3.5 Sonnet (Bedrock) | Bedrock Knowledge Base | Lambda + API Gateway (SAM) |
-| [`LangGraph_RAG/`](#langgraph_rag) | Graph RAG | OpenAI gpt-4o-mini | Custom FAISS + S3 | Lambda + API Gateway (SAM) |
+| [`RAG_Agent_LangGraph/`](#rag_agent_langgraph) | RAG Agent | OpenAI gpt-4o-mini | Custom FAISS + S3 | Lambda + API Gateway (SAM) |
 | [`MCP-Powered_LLM_Agent/`](#mcp-powered_llm_agent) | MCP Tool Agent | OpenAI gpt-4o-mini | Web Search · Weather · Calculator (MCP) | Vercel (Next.js) |
 | `Knowledge_Graph_Agent/` | Knowledge Graph Agent | — | — | — |
 | `multi-agent/` | Multi-Agent | — | — | — |
@@ -53,11 +53,11 @@ User → API Gateway → Lambda
 
 ---
 
-## LangGraph_RAG
+## RAG_Agent_LangGraph
 
 **Stack:** OpenAI gpt-4o-mini · FAISS · S3 · LangGraph · AWS Lambda · API Gateway · SAM
 
-A RAG service built as an explicit [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph`. The graph is compiled once at module level and reused across Lambda warm starts. The flow is fixed (retrieve → generate) but the typed state and graph structure make it trivial to add grading, query rewriting, or multi-agent patterns later.
+A RAG agent built as an explicit [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph`. The graph is compiled once at module level and reused across Lambda warm starts. After retrieval, a grading node decides whether the documents are relevant before calling the LLM — skipping generation entirely when retrieval fails.
 
 ```
 User → API Gateway → Lambda
@@ -65,15 +65,17 @@ User → API Gateway → Lambda
                     graph.py (LangGraph StateGraph, compiled at module level)
                         │
               ┌─────────┴──────────┐
-           retrieve             generate
+           retrieve          grade_documents
               │                     │
-          retriever.py ──► FAISS  gpt-4o-mini
-                           (cached from S3)
+          retriever.py ──► FAISS   YES → generate → answer
+                           (cached  NO  → no_answer
+                           from S3)
 ```
 
-**Graph topology:** `START → retrieve → generate → END`
+**Graph topology:** `START → retrieve → grade_documents → [YES] → generate → END`
+                                                       `→ [NO]  → no_answer → END`
 
-**When to use:** You want the simplicity of a fixed RAG pipeline but with an explicit, visualisable, and extensible graph structure — a natural stepping stone toward CRAG or multi-agent patterns.
+**When to use:** You want an explicit, visualisable RAG pipeline with conditional routing — a natural stepping stone toward CRAG or multi-agent patterns.
 
 ---
 
@@ -120,12 +122,12 @@ The agent, chat logic, and UI require zero changes.
 
 ### All projects compared
 
-| | Agentic_RAG | LangGraph_RAG | Bedrock_RAG_Agent | MCP-Powered_LLM_Agent |
+| | Agentic_RAG | RAG_Agent_LangGraph | Bedrock_RAG_Agent | MCP-Powered_LLM_Agent |
 |---|---|---|---|---|
 | **LLM** | OpenAI gpt-4o | OpenAI gpt-4o-mini | Claude 3.5 Sonnet (Bedrock) | OpenAI gpt-4o-mini |
 | **Tool / RAG mechanism** | OpenAI function calling | LangGraph StateGraph | Bedrock Knowledge Base | MCP (JSON-RPC 2.0) |
 | **Vector store** | FAISS (S3-cached) | FAISS (S3-cached) | OpenSearch Serverless | None |
-| **Flow control** | Dynamic tool-calling loop | Fixed graph (retrieve → generate) | Managed by Bedrock Agent | Dynamic tool-calling loop |
+| **Flow control** | Dynamic tool-calling loop | Conditional graph (retrieve → grade → generate/no_answer) | Managed by Bedrock Agent | Dynamic tool-calling loop |
 | **Flow structure** | Implicit (agent decides) | Explicit typed StateGraph | Opaque (managed) | Implicit (agent decides) |
 | **Extensibility** | Add OpenAI tools | Add graph nodes / edges | Limited to Bedrock features | Add 1 file + 1 config line |
 | **Memory** | None | None | None | Session-based (→ Vercel KV) |
@@ -134,13 +136,13 @@ The agent, chat logic, and UI require zero changes.
 | **Cold start** | Downloads FAISS from S3 | Downloads FAISS from S3 | No index to load | No index to load |
 | **Cost model** | Pay per OpenAI call | Pay per OpenAI call | Pay per token + OSS (~$700/mo min) | Pay per OpenAI call; Vercel free tier |
 | **Code to maintain** | ~300 lines | ~200 lines | ~80 lines | ~500 lines |
-| **Best for** | Full control, multi-turn loops | Explicit flow, easy to extend | Managed infra, AWS-native | Real-time tools, fast iteration, Vercel |
+| **Best for** | Full control, multi-turn loops | Explicit flow, conditional routing | Managed infra, AWS-native | Real-time tools, fast iteration, Vercel |
 
 ### Key Trade-offs
 
 > **Agentic_RAG** gives maximum flexibility — the agent dynamically decides how many times to retrieve, supports multi-turn tool use, and can be extended with any OpenAI tool. Higher memory and timeout needed.
 >
-> **LangGraph_RAG** makes the data flow explicit and typed. Same FAISS/S3 stack as Agentic_RAG but the graph structure is self-documenting and easy to extend (add grading, rewriting, routing) without touching the Lambda handler.
+> **RAG_Agent_LangGraph** makes the data flow explicit and typed. Same FAISS/S3 stack as Agentic_RAG but with conditional routing — a grading node skips generation when retrieved documents are irrelevant, saving LLM cost and returning a clear fallback message.
 >
 > **Bedrock_RAG_Agent** eliminates all RAG plumbing and is deeply integrated with AWS IAM/security, but the OpenSearch Serverless cost floor makes it unsuitable for experimentation or low-traffic use cases.
 >
@@ -171,7 +173,7 @@ AI_Agent_Deployment_Hub/
 │   ├── requirements.txt
 │   └── .env.example
 │
-├── LangGraph_RAG/           # LangGraph StateGraph RAG + FAISS + S3
+├── RAG_Agent_LangGraph/     # LangGraph StateGraph RAG agent + FAISS + S3
 │   ├── src/
 │   │   ├── lambda_function.py
 │   │   ├── graph.py

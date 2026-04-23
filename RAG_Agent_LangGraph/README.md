@@ -1,20 +1,22 @@
-# LangGraph RAG
+# RAG Agent with LangGraph
 
-A Retrieval-Augmented Generation (RAG) service implemented as an explicit
+A Retrieval-Augmented Generation (RAG) agent implemented as an explicit
 [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph`, deployed
 on AWS Lambda + API Gateway via SAM.
 
 ## Graph
 
 ```
-START → retrieve → generate → END
+START → retrieve → grade_documents → [relevant?] → YES → generate → END
+                                                  → NO  → no_answer → END
 ```
 
 ```
 RAGState
 ├── question:  str        # input
 ├── documents: list[str]  # populated by retrieve
-└── answer:    str        # populated by generate
+├── relevant:  bool       # populated by grade_documents
+└── answer:    str        # populated by generate or no_answer
 ```
 
 The graph is compiled **once at module level** and reused across Lambda warm
@@ -22,27 +24,27 @@ starts — equivalent to a singleton service object.
 
 ## How it compares to Agentic_RAG
 
-| Aspect | Agentic_RAG | LangGraph_RAG |
+| Aspect | Agentic_RAG | RAG_Agent_LangGraph |
 |---|---|---|
 | Flow control | OpenAI tool-calling loop | LangGraph StateGraph |
-| Steps | Dynamic (agent decides) | Fixed: retrieve → generate |
+| Steps | Dynamic (agent decides) | Conditional: retrieve → grade → generate/no_answer |
 | Visualisable | No | Yes (`app.get_graph().draw_mermaid()`) |
 | Extensible | Add tools | Add nodes / edges |
-| LLM calls | ≥ 2 (plan + answer) | 2 (embed + generate) |
+| LLM calls | ≥ 2 (plan + answer) | 2-3 (embed + grade + generate) |
 | Model | gpt-4o | gpt-4o-mini |
 
 Both projects produce equivalent answers for a single-turn RAG query. The
-LangGraph version makes the data flow explicit and typed, making it easy to
-extend with grading, query rewriting, or multi-agent patterns (CRAG, etc.).
+LangGraph version makes the data flow explicit and typed, with conditional
+routing to skip generation when retrieved documents are not relevant.
 
 ## Project Structure
 
 ```
-LangGraph_RAG/
+RAG_Agent_LangGraph/
 ├── src/
 │   ├── lambda_function.py   # Lambda handler
 │   ├── graph.py             # StateGraph compiled at module level
-│   ├── nodes.py             # RAGState, retrieve(), generate()
+│   ├── nodes.py             # RAGState, retrieve(), grade_documents(), generate(), no_answer()
 │   └── retriever.py         # FAISS + S3 (same as Agentic_RAG)
 ├── template.yaml            # SAM: Lambda + HTTP API Gateway
 ├── requirements.txt
@@ -71,7 +73,7 @@ python src/indexer.py \
 ## Local Development
 
 ```bash
-cd LangGraph_RAG
+cd RAG_Agent_LangGraph
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
@@ -90,7 +92,7 @@ print(result['answer'])
 ## Deploy to AWS
 
 ```bash
-cd LangGraph_RAG
+cd RAG_Agent_LangGraph
 sam build
 sam deploy --guided
 ```
