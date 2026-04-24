@@ -2,28 +2,28 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 
 Description: >
-  LangGraph RAG — Lambda + API Gateway HTTP API.
-  Uses a LangGraph StateGraph (retrieve → generate) with FAISS (loaded from S3)
-  to answer questions over a private knowledge base.
+  RAG Agent with LangGraph — Lambda + API Gateway HTTP API.
+  Fast path: retrieve → grade → generate → deliver response immediately.
+  Async path: EvaluatorFunction runs Layers 1–3 in the background without
+  blocking the user, then stores results to DynamoDB and flags low-quality
+  responses for human review. Layer 4 (user feedback) is handled via /feedback.
 
 Globals:
   Function:
-    Timeout: 60           # seconds — single LLM call, no tool loops
-    MemorySize: 512       # MB — FAISS index + LangGraph overhead
     Runtime: python3.12
     Architectures:
       - x86_64
     Environment:
       Variables:
-        LOG_LEVEL: INFO
-        LLM_MODEL: gpt-4o-mini
-        TOP_K: "5"
+        LOG_LEVEL:   INFO
+        LLM_MODEL:   gpt-4o-mini
+        JUDGE_MODEL: gpt-4o
 
 Parameters:
   OpenAIApiKey:
     Type: String
     NoEcho: true
-    Description: OpenAI API key (stored as a plain env var; use SSM/Secrets Manager for production)
+    Description: OpenAI API key
 
   S3Bucket:
     Type: String
@@ -41,8 +41,34 @@ Parameters:
 
 Resources:
 
-  # ── IAM Role ──────────────────────────────────────────────────────────────
-  LangGraphRAGRole:
+  # ── DynamoDB: evaluation logs (Layers 1, 2, 3) ────────────────────────────
+  EvaluationLogsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: RAGEvaluationLogs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: response_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: response_id
+          KeyType: HASH
+
+  # ── DynamoDB: user feedback (Layer 4) ─────────────────────────────────────
+  UserFeedbackTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: RAGUserFeedback
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: response_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: response_id
+          KeyType: HASH
+
+  # ── IAM Role: main RAG function ───────────────────────────────────────────
+  RAGAgentRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -60,62 +86,137 @@ Resources:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:ListBucket
+                Action: [s3:GetObject, s3:ListBucket]
                 Resource:
                   - !Sub "arn:aws:s3:::${S3Bucket}"
                   - !Sub "arn:aws:s3:::${S3Bucket}/*"
+        - PolicyName: DynamoDBFeedbackAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !GetAtt UserFeedbackTable.Arn
+              - Effect: Allow
+                Action: [dynamodb:UpdateItem]
+                Resource: !GetAtt EvaluationLogsTable.Arn
+        - PolicyName: InvokeEvaluator
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt EvaluatorFunction.Arn
 
-  # ── Lambda Function ────────────────────────────────────────────────────────
-  LangGraphRAGFunction:
+  # ── IAM Role: evaluator function ─────────────────────────────────────────
+  EvaluatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBEvalAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource:
+                  - !GetAtt EvaluationLogsTable.Arn
+
+  # ── Main RAG Lambda (fast path) ───────────────────────────────────────────
+  RAGAgentFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: langgraph-rag
+      FunctionName: rag-agent-langgraph
       CodeUri: src/
       Handler: lambda_function.handler
-      Role: !GetAtt LangGraphRAGRole.Arn
+      Role: !GetAtt RAGAgentRole.Arn
+      Timeout: 60         # retrieve + grade + generate only — no evaluation blocking
+      MemorySize: 512     # FAISS index + LangGraph overhead
       Environment:
         Variables:
-          OPENAI_API_KEY: !Ref OpenAIApiKey
-          S3_BUCKET: !Ref S3Bucket
-          INDEX_KEY: !Ref IndexKey
-          CHUNKS_KEY: !Ref ChunksKey
+          OPENAI_API_KEY:          !Ref OpenAIApiKey
+          S3_BUCKET:               !Ref S3Bucket
+          INDEX_KEY:               !Ref IndexKey
+          CHUNKS_KEY:              !Ref ChunksKey
+          TOP_K:                   "5"
+          FEEDBACK_TABLE_NAME:     !Ref UserFeedbackTable
+          EVAL_TABLE_NAME:         !Ref EvaluationLogsTable
+          EVALUATOR_FUNCTION_NAME: !GetAtt EvaluatorFunction.Arn
       Events:
         QueryApi:
           Type: HttpApi
           Properties:
-            ApiId: !Ref LangGraphRAGApi
+            ApiId: !Ref RAGAgentApi
             Path: /query
+            Method: POST
+        FeedbackApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref RAGAgentApi
+            Path: /feedback
             Method: POST
         HealthApi:
           Type: HttpApi
           Properties:
-            ApiId: !Ref LangGraphRAGApi
+            ApiId: !Ref RAGAgentApi
             Path: /health
             Method: GET
 
+  # ── Evaluator Lambda (async background) ──────────────────────────────────
+  EvaluatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: rag-evaluator-langgraph
+      CodeUri: src/
+      Handler: evaluator_handler.handler
+      Role: !GetAtt EvaluatorRole.Arn
+      Timeout: 120        # up to 4 LLM calls (faithfulness, relevance, precision, judge)
+      MemorySize: 256     # no FAISS — lightweight
+      Environment:
+        Variables:
+          OPENAI_API_KEY:             !Ref OpenAIApiKey
+          EVAL_TABLE_NAME:            !Ref EvaluationLogsTable
+          THRESHOLD_FAITHFULNESS:     "0.7"
+          THRESHOLD_ANSWER_RELEVANCE: "0.6"
+          THRESHOLD_CONTEXT_PRECISION: "0.5"
+          THRESHOLD_JUDGE_SCORE:      "3.0"
+
   # ── HTTP API Gateway ───────────────────────────────────────────────────────
-  LangGraphRAGApi:
+  RAGAgentApi:
     Type: AWS::Serverless::HttpApi
     Properties:
-      Name: langgraph-rag-api
+      Name: rag-agent-langgraph-api
       CorsConfiguration:
-        AllowOrigins:
-          - "*"
-        AllowMethods:
-          - GET
-          - POST
-          - OPTIONS
-        AllowHeaders:
-          - Content-Type
-          - Authorization
+        AllowOrigins:  ["*"]
+        AllowMethods:  [GET, POST, OPTIONS]
+        AllowHeaders:  [Content-Type, Authorization]
 
 Outputs:
   ApiUrl:
     Description: HTTP API base URL
-    Value: !Sub "https://${LangGraphRAGApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Value: !Sub "https://${RAGAgentApi}.execute-api.${AWS::Region}.amazonaws.com"
 
-  FunctionArn:
-    Description: Lambda function ARN
-    Value: !GetAtt LangGraphRAGFunction.Arn
+  RAGAgentFunctionArn:
+    Description: Main RAG Lambda ARN
+    Value: !GetAtt RAGAgentFunction.Arn
+
+  EvaluatorFunctionArn:
+    Description: Async evaluator Lambda ARN
+    Value: !GetAtt EvaluatorFunction.Arn
+
+  EvaluationLogsTable:
+    Description: DynamoDB table for evaluation logs (Layers 1, 2, 3)
+    Value: !Ref EvaluationLogsTable
+
+  UserFeedbackTable:
+    Description: DynamoDB table for user feedback (Layer 4)
+    Value: !Ref UserFeedbackTable
