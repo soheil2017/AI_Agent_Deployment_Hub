@@ -1,0 +1,17 @@
+# Core RL + game environment
+gymnasium==0.29.1
+
+# OpenAI (Phase 1 — play & data collection)
+openai>=1.30.0
+python-dotenv>=1.0.0
+
+# Local LLM + LoRA (Phase 2 — PPO fine-tuning)
+torch>=2.1.0
+transformers>=4.40.0
+peft>=0.10.0
+accelerate>=0.27.0
+bitsandbytes>=0.43.0   # 4-bit quantization (CUDA only; safe to ignore warning on CPU/MPS)
+
+# RL training (added in train.py phase)
+trl>=0.8.6
+datasets>=2.18.0

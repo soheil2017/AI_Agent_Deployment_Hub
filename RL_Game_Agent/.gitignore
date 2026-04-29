@@ -1,0 +1,5 @@
+.env
+lora_adapter/
+__pycache__/
+*.pyc
+*.pyo
