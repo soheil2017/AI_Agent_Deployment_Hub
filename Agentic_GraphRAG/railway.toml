@@ -1,0 +1,33 @@
+# railway.toml — Railway deployment configuration
+#
+# Three services in one Railway project:
+#
+#   web       — FastAPI app (this file)  → public URL
+#   neo4j     — Neo4j graph database     → internal Railway URL
+#   chromadb  — ChromaDB vector store    → internal Railway URL
+#
+# Neo4j and ChromaDB are added via Railway's service templates (not defined here).
+# Set these environment variables in the Railway dashboard for the 'web' service:
+#
+#   OPENAI_API_KEY        — OpenAI API key
+#   ANTHROPIC_API_KEY     — Anthropic API key (Claude Vision)
+#   LANGFUSE_PUBLIC_KEY   — Langfuse public key
+#   LANGFUSE_SECRET_KEY   — Langfuse secret key
+#   LANGFUSE_HOST         — https://cloud.langfuse.com (or self-hosted URL)
+#   NEO4J_URI             — bolt://<neo4j-service>.railway.internal:7687
+#   NEO4J_USER            — neo4j
+#   NEO4J_PASSWORD        — your Neo4j password
+#   CHROMA_USE_HTTP       — true
+#   CHROMA_HOST           — <chromadb-service>.railway.internal
+#   CHROMA_PORT           — 8000
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "uvicorn src.main:api --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

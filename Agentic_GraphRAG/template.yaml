@@ -1,0 +1,219 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  Conduit Graph RAG Agent — dental healthcare interoperability assistant.
+  Uses Neo4j (graph DB) + ChromaDB (vector DB) + Claude Vision (VLM).
+  LangGraph routes each query to the right tool: relational → Neo4j,
+  semantic → ChromaDB, visual → VLM (Claude Vision), hybrid → both.
+  Async evaluation (4 layers) runs after every response without blocking the user.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        LOG_LEVEL:   INFO
+        LLM_MODEL:   gpt-4o-mini
+        JUDGE_MODEL: gpt-4o
+        VLM_MODEL:   claude-opus-4-6
+
+Parameters:
+  OpenAIApiKey:
+    Type: String
+    NoEcho: true
+    Description: OpenAI API key (text LLM + embeddings)
+
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+    Description: Anthropic API key (Claude Vision for VLM)
+
+  Neo4jUri:
+    Type: String
+    Description: Neo4j connection URI (e.g. bolt://your-neo4j-host:7687)
+
+  Neo4jUser:
+    Type: String
+    Default: neo4j
+    Description: Neo4j username
+
+  Neo4jPassword:
+    Type: String
+    NoEcho: true
+    Description: Neo4j password
+
+Resources:
+
+  # ── DynamoDB: evaluation logs (Layers 1, 2, 3) ──────────────────────────────
+  EvaluationLogsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: GraphRAGEvaluationLogs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: response_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: response_id
+          KeyType: HASH
+
+  # ── DynamoDB: user feedback (Layer 4) ───────────────────────────────────────
+  UserFeedbackTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: GraphRAGUserFeedback
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: response_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: response_id
+          KeyType: HASH
+
+  # ── IAM Role: main agent function ────────────────────────────────────────────
+  GraphRAGAgentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBFeedbackAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !GetAtt UserFeedbackTable.Arn
+              - Effect: Allow
+                Action: [dynamodb:UpdateItem]
+                Resource: !GetAtt EvaluationLogsTable.Arn
+        - PolicyName: InvokeEvaluator
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt EvaluatorFunction.Arn
+
+  # ── IAM Role: evaluator function ─────────────────────────────────────────────
+  EvaluatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBEvalAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !GetAtt EvaluationLogsTable.Arn
+
+  # ── Main Graph RAG Lambda ─────────────────────────────────────────────────────
+  GraphRAGAgentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: conduit-graph-rag-agent
+      CodeUri: src/
+      Handler: lambda_function.handler
+      Role: !GetAtt GraphRAGAgentRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          OPENAI_API_KEY:          !Ref OpenAIApiKey
+          ANTHROPIC_API_KEY:       !Ref AnthropicApiKey
+          NEO4J_URI:               !Ref Neo4jUri
+          NEO4J_USER:              !Ref Neo4jUser
+          NEO4J_PASSWORD:          !Ref Neo4jPassword
+          CHROMA_USE_HTTP:         "false"    # set to "true" if using remote ChromaDB
+          FEEDBACK_TABLE_NAME:     !Ref UserFeedbackTable
+          EVAL_TABLE_NAME:         !Ref EvaluationLogsTable
+          EVALUATOR_FUNCTION_NAME: !GetAtt EvaluatorFunction.Arn
+      Events:
+        QueryApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref GraphRAGApi
+            Path: /query
+            Method: POST
+        FeedbackApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref GraphRAGApi
+            Path: /feedback
+            Method: POST
+        HealthApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref GraphRAGApi
+            Path: /health
+            Method: GET
+
+  # ── Evaluator Lambda (async background) ──────────────────────────────────────
+  EvaluatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: conduit-graph-rag-evaluator
+      CodeUri: src/
+      Handler: evaluator_handler.handler
+      Role: !GetAtt EvaluatorRole.Arn
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          OPENAI_API_KEY:              !Ref OpenAIApiKey
+          EVAL_TABLE_NAME:             !Ref EvaluationLogsTable
+          THRESHOLD_FAITHFULNESS:      "0.7"
+          THRESHOLD_ANSWER_RELEVANCE:  "0.6"
+          THRESHOLD_CONTEXT_PRECISION: "0.5"
+          THRESHOLD_JUDGE_SCORE:       "3.0"
+
+  # ── HTTP API Gateway ──────────────────────────────────────────────────────────
+  GraphRAGApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: conduit-graph-rag-api
+      CorsConfiguration:
+        AllowOrigins:  ["*"]
+        AllowMethods:  [GET, POST, OPTIONS]
+        AllowHeaders:  [Content-Type, Authorization]
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API base URL
+    Value: !Sub "https://${GraphRAGApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  GraphRAGAgentFunctionArn:
+    Description: Main Graph RAG Lambda ARN
+    Value: !GetAtt GraphRAGAgentFunction.Arn
+
+  EvaluatorFunctionArn:
+    Description: Async evaluator Lambda ARN
+    Value: !GetAtt EvaluatorFunction.Arn
+
+  EvaluationLogsTable:
+    Description: DynamoDB table for evaluation logs (Layers 1, 2, 3)
+    Value: !Ref EvaluationLogsTable
+
+  UserFeedbackTable:
+    Description: DynamoDB table for user feedback (Layer 4)
+    Value: !Ref UserFeedbackTable

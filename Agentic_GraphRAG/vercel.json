@@ -1,0 +1,29 @@
+{
+  "comment": "vercel.json — Vercel deployment config for the FastAPI app",
+  "comment2": "Use this INSTEAD of Railway for the web service if you prefer Vercel for the API.",
+  "builds": [
+    {
+      "src": "src/main.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "src/main.py"
+    }
+  ],
+  "env": {
+    "OPENAI_API_KEY":      "@openai-api-key",
+    "ANTHROPIC_API_KEY":   "@anthropic-api-key",
+    "LANGFUSE_PUBLIC_KEY": "@langfuse-public-key",
+    "LANGFUSE_SECRET_KEY": "@langfuse-secret-key",
+    "LANGFUSE_HOST":       "https://cloud.langfuse.com",
+    "NEO4J_URI":           "@neo4j-uri",
+    "NEO4J_USER":          "@neo4j-user",
+    "NEO4J_PASSWORD":      "@neo4j-password",
+    "CHROMA_USE_HTTP":     "true",
+    "CHROMA_HOST":         "@chroma-host",
+    "CHROMA_PORT":         "8000"
+  }
+}
