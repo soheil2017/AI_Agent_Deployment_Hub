@@ -36,16 +36,19 @@ from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from langfuse.callback import CallbackHandler as LangfuseCallback
-
 try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+    from langfuse.langchain import CallbackHandler as LangfuseCallback
+    _langfuse_enabled = True
+except Exception:
+    _langfuse_enabled = False
+
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 from graph import app as rag_app
 import evaluator_handler
+
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -96,58 +99,47 @@ def health():
 
 @api.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest, background_tasks: BackgroundTasks):
-    """
-    Run the Graph RAG agent and return the answer immediately.
-    Evaluation (Layers 1–3) runs as a background task after the response.
-
-    Langfuse tracing is automatic — the CallbackHandler instruments every
-    LangGraph node and logs token usage, latency, and inputs/outputs.
-    """
     trace_id = str(uuid.uuid4())
+    try:
+        # Build initial LangGraph state
+        initial_state: dict = {"response_id": trace_id, "question": request.question}
+        if request.image_base64:
+            initial_state["image_base64"] = request.image_base64
+            initial_state["media_type"]   = request.media_type
 
-    # Langfuse callback — auto-traces every LangGraph node
-    langfuse_handler = LangfuseCallback(
-        public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
-        secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
-        host=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-        trace_id=trace_id,
-        session_id=trace_id,
-        user_id="conduit-api",
-        tags=["production", "dental-rag"],
-        metadata={"question": request.question},
-    )
+        # Attach Langfuse callback if available
+        callbacks = []
+        if _langfuse_enabled:
+            try:
+                callbacks = [LangfuseCallback()]
+            except Exception as e:
+                logger.warning("Langfuse callback init failed: %s", e)
 
-    # Build initial LangGraph state
-    initial_state: dict = {"response_id": trace_id, "question": request.question}
-    if request.image_base64:
-        initial_state["image_base64"] = request.image_base64
-        initial_state["media_type"]   = request.media_type
+        # Invoke the graph
+        final_state = rag_app.invoke(
+            initial_state,
+            config={"callbacks": callbacks} if callbacks else {},
+        )
 
-    # Invoke the graph — Langfuse automatically records each node as a span
-    final_state = rag_app.invoke(
-        initial_state,
-        config={"callbacks": [langfuse_handler]},
-    )
+        answer     = final_state.get("answer", "")
+        query_type = final_state.get("query_type", "")
+        documents  = final_state.get("documents", [])
 
-    answer     = final_state.get("answer", "")
-    query_type = final_state.get("query_type", "")
-    documents  = final_state.get("documents", [])
+        background_tasks.add_task(
+            evaluator_handler.run,
+            trace_id=trace_id,
+            question=request.question,
+            answer=answer,
+            documents=documents,
+            query_type=query_type,
+        )
 
-    # Flush Langfuse spans before firing the background task
-    langfuse_handler.flush()
+        logger.info("query: trace_id=%s query_type=%s", trace_id, query_type)
+        return QueryResponse(answer=answer, trace_id=trace_id, query_type=query_type)
 
-    # Run evaluation asynchronously — scores are sent to Langfuse after response
-    background_tasks.add_task(
-        evaluator_handler.run,
-        trace_id=trace_id,
-        question=request.question,
-        answer=answer,
-        documents=documents,
-        query_type=query_type,
-    )
-
-    logger.info("query: trace_id=%s query_type=%s", trace_id, query_type)
-    return QueryResponse(answer=answer, trace_id=trace_id, query_type=query_type)
+    except Exception as exc:
+        logger.exception("query failed: %s", exc)
+        raise
 
 
 @api.post("/feedback", response_model=FeedbackResponse)

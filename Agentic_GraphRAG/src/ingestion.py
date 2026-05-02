@@ -14,6 +14,10 @@ The data is synthetic but realistic for a dental-interoperability company.
 """
 
 import logging
+from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 from storage import get_neo4j, get_chroma
 

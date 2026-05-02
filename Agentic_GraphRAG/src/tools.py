@@ -73,6 +73,11 @@ def graph_search(question: str) -> list[str]:
     prompt = f"""You are a Neo4j expert. Given the schema below, write a Cypher READ query
 to answer the question. Return ONLY the Cypher query — no explanation, no markdown fences.
 
+Important: In the RETURN clause, include properties from ALL matched nodes (not just the
+starting node), so the result contains enough context to fully answer the question.
+For example, if matching patients with prior auths, return both patient name AND prior auth
+status, id, submitted_date, etc.
+
 Schema:
 {_NEO4J_SCHEMA}
 
