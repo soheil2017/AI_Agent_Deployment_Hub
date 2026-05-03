@@ -33,6 +33,5 @@ except Exception as e:
 ) &
 
 # Start API server immediately so the health check passes
-echo "DEPLOY_VERSION: v7"
 echo "Starting API server..."
 uvicorn main:api --host 0.0.0.0 --port ${PORT:-8000}
