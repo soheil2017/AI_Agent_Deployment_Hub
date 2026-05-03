@@ -33,7 +33,6 @@ except Exception as e:
 ) &
 
 # Start API server immediately so the health check passes
-echo "DEPLOY_VERSION: v6-langfuse-debug"
-echo "LANGFUSE_VARS: pk=${LANGFUSE_PUBLIC_KEY:0:8} sk=${LANGFUSE_SECRET_KEY:0:8} host=${LANGFUSE_HOST}"
+echo "DEPLOY_VERSION: v7"
 echo "Starting API server..."
 uvicorn main:api --host 0.0.0.0 --port ${PORT:-8000}
