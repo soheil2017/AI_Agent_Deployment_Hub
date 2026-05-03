@@ -11,12 +11,17 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source
+# Copy source and startup script
 COPY src/ ./src/
+COPY startup.sh ./src/startup.sh
+
+# Move into src so all local imports (graph, nodes, tools…) resolve correctly
+WORKDIR /app/src
+
+RUN chmod +x startup.sh
 
 # Expose the port Railway will route traffic to
 EXPOSE 8000
 
-# Start FastAPI with uvicorn
-# Railway sets PORT env var automatically — we default to 8000
-CMD ["sh", "-c", "uvicorn src.main:api --host 0.0.0.0 --port ${PORT:-8000}"]
+# Run ingestion then start the API server
+CMD ./startup.sh
