@@ -179,9 +179,16 @@ Agentic_GraphRAG/
 │   ├── evaluator.py          4-layer evaluation logic
 │   ├── evaluator_handler.py  Async eval runner + Langfuse score logger
 │   └── lambda_function.py    AWS Lambda handler (alternative to main.py for AWS deployment)
-├── Dockerfile                Container build for Railway
+├── frontend/
+│   ├── app/
+│   │   ├── page.tsx          Chat UI — dark theme, query-type badges, image upload, feedback
+│   │   └── layout.tsx        Root layout with dark background
+│   ├── package.json          Next.js 14 dependencies
+│   ├── next.config.js        NEXT_PUBLIC_API_URL configuration
+│   └── tsconfig.json         TypeScript config
+├── Dockerfile                Container build for Railway (FastAPI app)
+├── startup.sh                Container entrypoint — runs ingestion then starts uvicorn
 ├── railway.toml              Railway deployment configuration
-├── vercel.json               Vercel deployment configuration (alternative)
 ├── requirements.txt          Python dependencies
 └── template.yaml             AWS SAM template (alternative for AWS deployment)
 ```
@@ -223,38 +230,54 @@ Called as a FastAPI `BackgroundTask`. Runs the evaluator, then pushes all scores
 
 ---
 
+## Live Deployment
+
+| Component | Platform | URL |
+|---|---|---|
+| **Next.js chat UI** | Vercel | `https://<your-vercel-app>.vercel.app` |
+| **FastAPI backend** | Railway | `https://conduit-graph-rag-production.up.railway.app` |
+| **ChromaDB** | Railway (internal) | `http://chroma.railway.internal:8000` |
+| **Neo4j** | AuraDB Free | `neo4j+s://<instance-id>.databases.neo4j.io` |
+| **Observability** | Langfuse Cloud | `https://cloud.langfuse.com` |
+
+---
+
 ## Deployment Architecture
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                    VERCEL  (Option A)                       │
-│             or  RAILWAY web service (Option B)              │
-│                                                            │
-│                    FastAPI  main.py                        │
-│             POST /query · POST /feedback · GET /health     │
-└─────────────────────────┬──────────────────────────────────┘
-                          │  internal Railway service URLs
-          ┌───────────────┼────────────────────┐
-          │               │                    │
-┌─────────▼──────┐ ┌──────▼───────┐  ┌────────▼────────┐
-│    RAILWAY     │ │   RAILWAY    │  │    LANGFUSE     │
-│                │ │              │  │     CLOUD       │
-│  Neo4j         │ │  ChromaDB    │  │                 │
-│  bolt://...    │ │  http://...  │  │  Traces, spans, │
-│  :7687         │ │  :8000       │  │  scores,        │
-│                │ │              │  │  user feedback  │
-└────────────────┘ └──────────────┘  └─────────────────┘
+┌──────────────────────────────────┐
+│         VERCEL                   │
+│   Next.js Chat UI (frontend/)    │
+│   Dark-theme chat, query badges, │
+│   image upload, thumbs feedback  │
+└────────────────┬─────────────────┘
+                 │  HTTPS (NEXT_PUBLIC_API_URL)
+┌────────────────▼─────────────────┐
+│         RAILWAY                  │
+│   FastAPI  main.py               │
+│   POST /query · POST /feedback   │
+│   GET  /health                   │
+└──────┬──────────────┬────────────┘
+       │ Railway      │ neo4j+s://
+       │ internal     │ AuraDB
+┌──────▼──────┐ ┌─────▼──────────────┐
+│  RAILWAY    │ │  NEO4J AURADB      │
+│  ChromaDB   │ │  Free tier         │
+│  :8000      │ │  Managed cloud DB  │
+└─────────────┘ └────────────────────┘
+       │
+┌──────▼──────────────┐
+│  LANGFUSE CLOUD     │
+│  Traces, spans,     │
+│  scores, feedback   │
+└─────────────────────┘
 ```
 
-**Option A — Vercel + Railway (recommended split):**
-- Vercel hosts the FastAPI app as serverless functions
-- Railway hosts Neo4j and ChromaDB as persistent container services
-- Use this when you want Vercel's edge network for the API layer
-
-**Option B — Railway only (simplest):**
-- All three services (FastAPI, Neo4j, ChromaDB) run on Railway
-- Easier to manage, no cross-platform networking
-- Use this for the initial production deployment
+**Recommended production setup:**
+- **Vercel** hosts the Next.js frontend — zero-config deploys on every push to `main`
+- **Railway** hosts the FastAPI app + ChromaDB as persistent container services
+- **Neo4j AuraDB** (free tier) replaces a self-hosted Neo4j — no maintenance, TLS by default
+- **Langfuse Cloud** receives all evaluation scores automatically after each query
 
 ---
 
@@ -400,82 +423,80 @@ curl http://localhost:8000/health
 
 ## Deploying to Railway
 
-### Step 1 — Create a Railway project
+### Step 1 — Create a Railway project and add ChromaDB
 
-```bash
-npm install -g @railway/cli
-railway login
-railway init
+In the [Railway dashboard](https://railway.com), create a new project and add a ChromaDB service:
+- Click **Add** → **Docker Image** → use `chromadb/chroma`
+- Note the internal URL Railway assigns: `chroma.railway.internal`
+
+### Step 2 — Set up Neo4j AuraDB
+
+Create a free Neo4j AuraDB instance at [console.neo4j.io](https://console.neo4j.io):
+- Download the credentials file at creation time (the only time the password is shown)
+- The **username** is the instance ID (e.g. `375eca5b`), not `neo4j`
+- The URI format is `neo4j+s://<instance-id>.databases.neo4j.io`
+
+### Step 3 — Connect your GitHub repo
+
+In the Railway dashboard for your API service:
+- Go to **Settings → Source → Connect Repo**
+- Select your GitHub repo and branch (`main`)
+- Set **Root Directory** to `Agentic_GraphRAG`
+
+Railway will now auto-deploy on every push to `main`. The `railway.toml` and `Dockerfile` in `Agentic_GraphRAG/` are used automatically.
+
+### Step 4 — Set environment variables
+
+In the Railway dashboard for the API service → **Variables**, set:
+
 ```
-
-### Step 2 — Add database services
-
-In the Railway dashboard, add two services from templates:
-- **Neo4j** — use the official Neo4j template
-- **ChromaDB** — deploy from the `chromadb/chroma` Docker image
-
-Note the internal service URLs Railway assigns to each (they look like `neo4j.railway.internal`).
-
-### Step 3 — Set environment variables
-
-In the Railway dashboard for the `web` service, set all variables from the `.env` file above. Use the Railway-internal URLs for Neo4j and ChromaDB:
-
-```
-NEO4J_URI=bolt://neo4j.railway.internal:7687
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+NEO4J_URI=neo4j+s://<instance-id>.databases.neo4j.io
+NEO4J_USER=<instance-id>
+NEO4J_PASSWORD=<password-from-credentials-file>
 CHROMA_USE_HTTP=true
-CHROMA_HOST=chromadb.railway.internal
+CHROMA_HOST=chroma.railway.internal
 CHROMA_PORT=8000
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=https://cloud.langfuse.com
 ```
 
-### Step 4 — Deploy
+### Step 5 — Deploy
 
-```bash
-railway up
-```
-
-Railway uses the `Dockerfile` to build the container and `railway.toml` for deployment settings (health check path, restart policy).
-
-### Step 5 — Run ingestion on Railway
-
-After the first deploy, run the ingestion script as a one-off Railway job:
-
-```bash
-railway run python src/ingestion.py
-```
+Push any change to `main` — Railway builds and deploys automatically. The `startup.sh` entrypoint runs data ingestion on every container start before uvicorn begins accepting requests.
 
 ---
 
-## Deploying to Vercel (API layer only)
+## Deploying the Frontend to Vercel
 
-Use this if you want Vercel to host the FastAPI app while Neo4j and ChromaDB stay on Railway.
+The `frontend/` directory is a Next.js 14 app with a dark-theme chat UI. Deploy it separately on Vercel:
 
-### Step 1 — Install Vercel CLI
+### Step 1 — Connect the repo in Vercel
 
-```bash
-npm install -g vercel
+In the [Vercel dashboard](https://vercel.com), import your GitHub repo:
+- Set **Root Directory** to `Agentic_GraphRAG/frontend`
+- Framework preset: **Next.js**
+
+### Step 2 — Set environment variable
+
+In Vercel → **Settings → Environment Variables**, add:
+
 ```
-
-### Step 2 — Add secrets
-
-```bash
-vercel env add OPENAI_API_KEY
-vercel env add ANTHROPIC_API_KEY
-vercel env add LANGFUSE_PUBLIC_KEY
-vercel env add LANGFUSE_SECRET_KEY
-vercel env add NEO4J_URI
-vercel env add NEO4J_PASSWORD
-vercel env add CHROMA_HOST
+NEXT_PUBLIC_API_URL=https://conduit-graph-rag-production.up.railway.app
 ```
 
 ### Step 3 — Deploy
 
-```bash
-vercel deploy --prod
-```
+Vercel auto-deploys on every push to `main`. The frontend calls `/query` and `/feedback` on the Railway API URL.
 
-Vercel uses `vercel.json` to route all traffic to `src/main.py`.
+### Frontend features
 
-> **Note:** Vercel serverless functions have a 60-second timeout on the Pro plan. This is sufficient for most queries but may be tight for large VLM image analysis. If timeouts occur, move the FastAPI app to Railway instead.
+- Dark-theme chat with query-type badges (relational / semantic / hybrid / visual)
+- Image upload via 📎 button — encodes to base64, triggers VLM analysis
+- Thumbs up / down feedback — calls `POST /feedback`, logged to Langfuse
+- Example questions pre-loaded for quick testing
 
 ---
 
