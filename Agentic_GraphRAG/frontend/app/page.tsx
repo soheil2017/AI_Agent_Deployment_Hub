@@ -23,29 +23,61 @@ interface Message {
   queryType?: string
   traceId?: string
   feedback?: 'up' | 'down'
+  imagePreview?: string
 }
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [imageBase64, setImageBase64] = useState<string | null>(null)
+  const [imageMediaType, setImageMediaType] = useState<string>('image/jpeg')
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
 
+  function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImageMediaType(file.type || 'image/jpeg')
+    setImagePreview(URL.createObjectURL(file))
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      // Strip "data:image/jpeg;base64," prefix
+      setImageBase64(result.split(',')[1])
+    }
+    reader.readAsDataURL(file)
+  }
+
+  function clearImage() {
+    setImageBase64(null)
+    setImagePreview(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   async function sendMessage(question: string) {
     if (!question.trim() || loading) return
     setInput('')
-    setMessages(prev => [...prev, { role: 'user', content: question }])
+    const sentImage = imagePreview
+    clearImage()
+    setMessages(prev => [...prev, { role: 'user', content: question, imagePreview: sentImage ?? undefined }])
     setLoading(true)
 
     try {
+      const body: Record<string, string> = { question }
+      if (imageBase64) {
+        body.image_base64 = imageBase64
+        body.media_type = imageMediaType
+      }
       const res = await fetch(`${API_URL}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify(body),
       })
       const data = await res.json()
       setMessages(prev => [...prev, {
@@ -110,11 +142,19 @@ export default function Home() {
           <div key={i} style={{ marginBottom: 20 }}>
             {msg.role === 'user' ? (
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <div style={{
-                  background: '#1d4ed8', borderRadius: '12px 12px 2px 12px',
-                  padding: '10px 14px', maxWidth: '80%', fontSize: 14, lineHeight: 1.5,
-                }}>
-                  {msg.content}
+                <div style={{ maxWidth: '80%' }}>
+                  {msg.imagePreview && (
+                    <img src={msg.imagePreview} alt="uploaded" style={{
+                      display: 'block', maxWidth: '100%', maxHeight: 200,
+                      borderRadius: 8, marginBottom: 6,
+                    }} />
+                  )}
+                  <div style={{
+                    background: '#1d4ed8', borderRadius: '12px 12px 2px 12px',
+                    padding: '10px 14px', fontSize: 14, lineHeight: 1.5,
+                  }}>
+                    {msg.content}
+                  </div>
                 </div>
               </div>
             ) : (
@@ -168,21 +208,39 @@ export default function Home() {
 
       {/* Input */}
       <div style={{ padding: '12px 0 20px', borderTop: '1px solid #1e293b' }}>
+        {imagePreview && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <img src={imagePreview} alt="preview" style={{ height: 48, borderRadius: 6 }} />
+            <span style={{ fontSize: 12, color: '#64748b' }}>Image attached</span>
+            <button onClick={clearImage} style={{
+              background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14,
+            }}>✕</button>
+          </div>
+        )}
         <form onSubmit={e => { e.preventDefault(); sendMessage(input) }}
           style={{ display: 'flex', gap: 8 }}>
+          <input type="file" accept="image/*" ref={fileInputRef}
+            onChange={handleImageUpload} style={{ display: 'none' }} />
+          <button type="button" onClick={() => fileInputRef.current?.click()} style={{
+            background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
+            padding: '10px 12px', color: imageBase64 ? '#38bdf8' : '#64748b',
+            cursor: 'pointer', fontSize: 18, lineHeight: 1,
+          }} title="Attach image">
+            📎
+          </button>
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder="Ask about patients, referrals, prior auths, policies..."
+            placeholder="Ask about patients, referrals, prior auths, or attach a dental image..."
             style={{
               flex: 1, background: '#1e293b', border: '1px solid #334155', borderRadius: 8,
               padding: '10px 14px', color: '#f1f5f9', fontSize: 14, outline: 'none',
             }}
           />
-          <button type="submit" disabled={loading || !input.trim()} style={{
+          <button type="submit" disabled={loading || (!input.trim() && !imageBase64)} style={{
             background: '#1d4ed8', border: 'none', borderRadius: 8,
             padding: '10px 20px', color: '#fff', fontSize: 14, cursor: 'pointer',
-            opacity: loading || !input.trim() ? 0.5 : 1,
+            opacity: loading || (!input.trim() && !imageBase64) ? 0.5 : 1,
           }}>
             Send
           </button>
