@@ -53,6 +53,7 @@ def run(
     the HTTP response has already been sent to the client.
     """
     logger.info("evaluator_handler.run: start trace_id=%s query_type=%s", trace_id, query_type)
+    print(f"[LANGFUSE] enabled={_langfuse_enabled} client_set={_langfuse is not None}", flush=True)
 
     # Layers 1 & 2 — compute all metrics
     result = run_evaluation(question=question, documents=documents, answer=answer)
