@@ -28,15 +28,19 @@ logger = logging.getLogger(__name__)
 
 try:
     pk = os.environ.get("LANGFUSE_PUBLIC_KEY", "NOT SET")
+    sk = os.environ.get("LANGFUSE_SECRET_KEY", "NOT SET")
     host = os.environ.get("LANGFUSE_HOST", "NOT SET")
-    print(f"[LANGFUSE] public_key={pk[:8] if pk != 'NOT SET' else 'NOT SET'} host={host}", flush=True)
+    logger.info("[LANGFUSE] public_key=%s secret_key=%s host=%s",
+                pk[:8] if pk != "NOT SET" else "NOT SET",
+                sk[:8] if sk != "NOT SET" else "NOT SET",
+                host)
     _langfuse = Langfuse()
     _langfuse_enabled = True
-    print("[LANGFUSE] initialized successfully", flush=True)
+    logger.info("[LANGFUSE] initialized successfully")
 except Exception as e:
     _langfuse = None
     _langfuse_enabled = False
-    print(f"[LANGFUSE] init failed: {e}", flush=True)
+    logger.warning("[LANGFUSE] init failed: %s", e)
 
 
 def run(
@@ -53,7 +57,7 @@ def run(
     the HTTP response has already been sent to the client.
     """
     logger.info("evaluator_handler.run: start trace_id=%s query_type=%s", trace_id, query_type)
-    print(f"[LANGFUSE] enabled={_langfuse_enabled} client_set={_langfuse is not None}", flush=True)
+    logger.info("[LANGFUSE] enabled=%s client_set=%s", _langfuse_enabled, _langfuse is not None)
 
     # Layers 1 & 2 — compute all metrics
     result = run_evaluation(question=question, documents=documents, answer=answer)
