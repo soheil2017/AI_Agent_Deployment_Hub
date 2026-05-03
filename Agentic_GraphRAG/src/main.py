@@ -107,11 +107,12 @@ def query(request: QueryRequest, background_tasks: BackgroundTasks):
             initial_state["image_base64"] = request.image_base64
             initial_state["media_type"]   = request.media_type
 
-        # Attach Langfuse callback if available
+        # Attach Langfuse callback if available — pass our trace_id so that
+        # create_score() in evaluator_handler uses the same trace.
         callbacks = []
         if _langfuse_enabled:
             try:
-                callbacks = [LangfuseCallback()]
+                callbacks = [LangfuseCallback(trace_id=trace_id)]
             except Exception as e:
                 logger.warning("Langfuse callback init failed: %s", e)
 

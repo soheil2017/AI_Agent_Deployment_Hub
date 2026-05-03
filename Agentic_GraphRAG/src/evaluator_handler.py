@@ -84,6 +84,7 @@ def run(
                 comment="; ".join(result.failure_reasons) if result.failure_reasons else "all thresholds met",
             )
             _langfuse.flush()
+            logger.info("Langfuse: scores flushed for trace_id=%s", trace_id)
         except Exception as e:
             logger.warning("Langfuse score logging failed: %s", e)
 
