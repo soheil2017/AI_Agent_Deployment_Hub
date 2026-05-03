@@ -19,28 +19,34 @@ Langfuse score names:
 
 import logging
 import os
-
-from langfuse import Langfuse
+import sys
 
 from evaluator import run_evaluation
 
 logger = logging.getLogger(__name__)
 
+# Attempt to import and initialize Langfuse
+_langfuse = None
+_langfuse_enabled = False
+
 try:
+    from langfuse import Langfuse
     pk = os.environ.get("LANGFUSE_PUBLIC_KEY", "NOT SET")
     sk = os.environ.get("LANGFUSE_SECRET_KEY", "NOT SET")
     host = os.environ.get("LANGFUSE_HOST", "NOT SET")
-    logger.info("[LANGFUSE] public_key=%s secret_key=%s host=%s",
-                pk[:8] if pk != "NOT SET" else "NOT SET",
-                sk[:8] if sk != "NOT SET" else "NOT SET",
-                host)
+    sys.stderr.write(
+        f"[LANGFUSE_INIT] pk={pk[:8] if pk != 'NOT SET' else 'NOT SET'}"
+        f" sk={sk[:8] if sk != 'NOT SET' else 'NOT SET'}"
+        f" host={host}\n"
+    )
+    sys.stderr.flush()
     _langfuse = Langfuse()
     _langfuse_enabled = True
-    logger.info("[LANGFUSE] initialized successfully")
+    sys.stderr.write("[LANGFUSE_INIT] initialized successfully\n")
+    sys.stderr.flush()
 except Exception as e:
-    _langfuse = None
-    _langfuse_enabled = False
-    logger.warning("[LANGFUSE] init failed: %s", e)
+    sys.stderr.write(f"[LANGFUSE_INIT] failed: {e}\n")
+    sys.stderr.flush()
 
 
 def run(
@@ -57,7 +63,8 @@ def run(
     the HTTP response has already been sent to the client.
     """
     logger.info("evaluator_handler.run: start trace_id=%s query_type=%s", trace_id, query_type)
-    logger.info("[LANGFUSE] enabled=%s client_set=%s", _langfuse_enabled, _langfuse is not None)
+    sys.stderr.write(f"[LANGFUSE_RUN] enabled={_langfuse_enabled} client_set={_langfuse is not None}\n")
+    sys.stderr.flush()
 
     # Layers 1 & 2 — compute all metrics
     result = run_evaluation(question=question, documents=documents, answer=answer)
