@@ -27,8 +27,14 @@ from evaluator import run_evaluation
 logger = logging.getLogger(__name__)
 
 try:
+    import os
+    pk = os.environ.get("LANGFUSE_PUBLIC_KEY", "NOT SET")
+    sk = os.environ.get("LANGFUSE_SECRET_KEY", "NOT SET")
+    host = os.environ.get("LANGFUSE_HOST", "NOT SET")
+    logger.info("Langfuse env: public_key=%s... host=%s", pk[:8] if pk != "NOT SET" else "NOT SET", host)
     _langfuse = Langfuse()
     _langfuse_enabled = True
+    logger.info("Langfuse initialized successfully")
 except Exception as e:
     _langfuse = None
     _langfuse_enabled = False
