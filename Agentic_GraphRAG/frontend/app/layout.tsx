@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Conduit Graph RAG',
+  title: 'HeyDonto AI Assistant',
   description: 'Dental healthcare knowledge graph agent',
 }
 
