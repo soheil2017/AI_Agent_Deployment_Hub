@@ -119,7 +119,7 @@ export default function Home() {
           HeyDonto AI Assistant
         </h1>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
-          Dental healthcare knowledge graph · Neo4j + ChromaDB + Claude Vision
+          This is a Dental healthcare knowledge graph, which is combination of Neo4j + ChromaDB + Claude Vision
         </p>
       </div>
 
