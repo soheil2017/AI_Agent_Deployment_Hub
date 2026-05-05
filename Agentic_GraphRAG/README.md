@@ -1,4 +1,4 @@
-# heyDonto Graph RAG Agent
+# HeyDonto Graph RAG Agent
 
 An intelligent question-answering agent built for **heyDonto** — the dental healthcare interoperability platform by [HeyDonto AI Technology](https://www.heydonto.com). The agent combines a **Knowledge Graph** (Neo4j), a **Vector Database** (ChromaDB), and a **Vision Language Model** (Claude Vision) to answer complex questions about patients, referrals, prior authorizations, FHIR standards, and clinical documents, things that flat vector search alone cannot handle.
 
