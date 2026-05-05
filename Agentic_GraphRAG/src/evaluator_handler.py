@@ -41,17 +41,26 @@ def run(
     answer:     str,
     documents:  list[str],
     query_type: str,
+    precomputed_faithfulness: float | None = None,
 ) -> None:
     """
     Run evaluation and push all scores to Langfuse.
 
     This function is called by FastAPI's BackgroundTasks — it runs after
     the HTTP response has already been sent to the client.
+
+    precomputed_faithfulness: if the sync gate already computed faithfulness,
+    pass it here so run_evaluation skips recomputing it.
     """
     logger.info("evaluator_handler.run: start trace_id=%s query_type=%s", trace_id, query_type)
 
-    # Layers 1 & 2 — compute all metrics
-    result = run_evaluation(question=question, documents=documents, answer=answer)
+    # Layers 1 & 2 — compute all metrics (faithfulness reused if pre-computed)
+    result = run_evaluation(
+        question=question,
+        documents=documents,
+        answer=answer,
+        precomputed_faithfulness=precomputed_faithfulness,
+    )
 
     # Layer 3 — log every metric as a named score on the Langfuse trace
     scores = {

@@ -1,6 +1,11 @@
 """
 evaluator.py — 4-layer evaluation framework for the Graph RAG agent.
 
+Layer 0 — Sync faithfulness gate (NEW):
+  check_faithfulness() runs synchronously BEFORE the answer is delivered.
+  If faithfulness < THRESHOLD_FAITHFULNESS, the response is flagged with
+  low_confidence=True so the caller can warn the user immediately.
+
 Layer 1 — RAGAS-style metrics (no ground truth needed):
   faithfulness       — are answer claims supported by the retrieved context?
   answer_relevance   — does the answer address the question?
@@ -184,19 +189,41 @@ class EvaluationResult:
         }
 
 
+# ── Layer 0: public sync gate ─────────────────────────────────────────────────
+
+def check_faithfulness(documents: list[str], answer: str) -> float:
+    """
+    Fast synchronous hallucination gate — called BEFORE the answer is sent.
+
+    Runs only the faithfulness check (one LLM call with gpt-4o-mini).
+    Returns a score from 0.0 (fully hallucinated) to 1.0 (fully grounded).
+    Never raises — returns 1.0 on error to fail open (don't block real answers).
+    """
+    try:
+        context = "\n\n---\n\n".join(documents) if documents else ""
+        if not context or not answer:
+            return 1.0
+        return _faithfulness(context, answer)
+    except Exception as exc:
+        logger.warning("check_faithfulness: error — %s", exc)
+        return 1.0
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def run_evaluation(
     question:  str,
     documents: list[str],
     answer:    str,
+    precomputed_faithfulness: float | None = None,
 ) -> EvaluationResult:
     """Run all layers and apply the threshold gate. Never raises."""
     try:
         context = "\n\n---\n\n".join(documents) if documents else ""
 
-        # Layer 1
-        faith = _faithfulness(context, answer)
+        # Layer 1 — reuse pre-computed faithfulness if the sync gate already ran
+        faith = precomputed_faithfulness if precomputed_faithfulness is not None \
+                else _faithfulness(context, answer)
         rel   = _answer_relevance(question, answer)
         prec  = _context_precision(question, documents)
 

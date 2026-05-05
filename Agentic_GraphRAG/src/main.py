@@ -25,7 +25,11 @@ Query request (with image for VLM):
     "media_type": "image/jpeg" }
 
 Query response:
-  { "answer": "...", "trace_id": "<uuid>", "query_type": "relational" }
+  { "answer": "...", "trace_id": "<uuid>", "query_type": "relational",
+    "low_confidence": false }
+
+  low_confidence=True means the sync faithfulness gate fired before delivery —
+  the answer may not be fully grounded in retrieved context.
 """
 
 import logging
@@ -51,6 +55,7 @@ except Exception:
     _langfuse_enabled = False
 
 from graph import app as rag_app
+from evaluator import check_faithfulness, THRESHOLD_FAITHFULNESS
 import evaluator_handler
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
@@ -77,9 +82,10 @@ class QueryRequest(BaseModel):
     media_type:   str        = "image/jpeg"
 
 class QueryResponse(BaseModel):
-    answer:     str
-    trace_id:   str
-    query_type: str
+    answer:         str
+    trace_id:       str
+    query_type:     str
+    low_confidence: bool = False
 
 class FeedbackRequest(BaseModel):
     trace_id: str
@@ -126,6 +132,21 @@ def query(request: QueryRequest, background_tasks: BackgroundTasks):
         query_type = final_state.get("query_type", "")
         documents  = final_state.get("documents", [])
 
+        # Layer 0 — sync faithfulness gate (runs before the response is sent)
+        # Skip for visual queries: the VLM answer isn't grounded in text chunks.
+        faith_score    = 1.0
+        low_confidence = False
+        if query_type != "visual" and documents and answer:
+            faith_score    = check_faithfulness(documents=documents, answer=answer)
+            low_confidence = faith_score < THRESHOLD_FAITHFULNESS
+            if low_confidence:
+                logger.warning(
+                    "query: low_confidence trace_id=%s faithfulness=%.2f",
+                    trace_id, faith_score,
+                )
+
+        # Full evaluation (Layers 1–3) runs async — no user latency impact.
+        # Pass the pre-computed faith_score so it isn't computed twice.
         background_tasks.add_task(
             evaluator_handler.run,
             trace_id=trace_id,
@@ -133,10 +154,19 @@ def query(request: QueryRequest, background_tasks: BackgroundTasks):
             answer=answer,
             documents=documents,
             query_type=query_type,
+            precomputed_faithfulness=faith_score,
         )
 
-        logger.info("query: trace_id=%s query_type=%s", trace_id, query_type)
-        return QueryResponse(answer=answer, trace_id=trace_id, query_type=query_type)
+        logger.info(
+            "query: trace_id=%s query_type=%s low_confidence=%s",
+            trace_id, query_type, low_confidence,
+        )
+        return QueryResponse(
+            answer=answer,
+            trace_id=trace_id,
+            query_type=query_type,
+            low_confidence=low_confidence,
+        )
 
     except Exception as exc:
         logger.exception("query failed: %s", exc)

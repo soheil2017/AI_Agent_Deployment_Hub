@@ -24,6 +24,7 @@ interface Message {
   traceId?: string
   feedback?: 'up' | 'down'
   imagePreview?: string
+  lowConfidence?: boolean
 }
 
 export default function Home() {
@@ -85,6 +86,7 @@ export default function Home() {
         content: data.answer,
         queryType: data.query_type,
         traceId: data.trace_id,
+        lowConfidence: data.low_confidence,
       }])
     } catch {
       setMessages(prev => [...prev, {
@@ -167,6 +169,15 @@ export default function Home() {
                       borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 600,
                     }}>
                       {msg.queryType}
+                    </span>
+                  )}
+                  {msg.lowConfidence && (
+                    <span style={{
+                      background: '#78350f', border: '1px solid #d97706',
+                      borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 600,
+                      color: '#fcd34d',
+                    }} title="Faithfulness score below threshold — answer may not be fully grounded in retrieved data">
+                      ⚠ low confidence
                     </span>
                   )}
                 </div>

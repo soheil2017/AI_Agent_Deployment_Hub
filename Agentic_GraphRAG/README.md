@@ -152,16 +152,46 @@ The Vision Language Model reads images and converts them to structured text that
 
 ---
 
-## Evaluation Framework (4 Layers)
+## Evaluation Framework (5 Layers)
 
-Every response is evaluated asynchronously — the answer is delivered immediately, and evaluation runs in the background. All scores are visible in the Langfuse dashboard.
+The evaluation is split into two tiers: a **synchronous gate** that runs before the answer is delivered, and a **full async evaluation** that runs after — so users never wait for the heavy metrics, but hallucinated answers are still caught before they reach the user.
 
-| Layer | What It Measures | When It Runs |
-|---|---|---|
-| **Layer 1 — RAGAS metrics** | Faithfulness, answer relevance, context precision (0.0–1.0) | After every response |
-| **Layer 2 — LLM-as-a-Judge** | Correctness, completeness, groundedness, clarity (1–5) | After every response |
-| **Layer 3 — Human review flag** | Responses below threshold are flagged in Langfuse | When thresholds fail |
-| **Layer 4 — User feedback** | Thumbs-up / thumbs-down from end users (POST /feedback) | On user action |
+```
+LangGraph produces answer
+        │
+        ▼
+┌───────────────────────────────────┐   SYNC — runs before delivery (~300ms)
+│  Layer 0: Faithfulness gate       │
+│  check_faithfulness()             │
+│  one LLM call (gpt-4o-mini)       │
+│  score < 0.7 → low_confidence=True│
+└───────────────┬───────────────────┘
+                │  answer + low_confidence flag delivered to user
+                ▼
+        User receives response
+                │
+                ▼  (BackgroundTask — no latency impact)
+┌───────────────────────────────────┐   ASYNC — runs after delivery
+│  Layer 1: RAGAS metrics           │   faithfulness (reused), answer_relevance,
+│  Layer 2: LLM-as-a-Judge          │   context_precision, correctness,
+│  Layer 3: Human review flag       │   completeness, groundedness, clarity
+└───────────────┬───────────────────┘
+                │
+                ▼
+        Langfuse: all 9 scores logged on the trace
+```
+
+| Layer | What It Measures | When | User Impact |
+|---|---|---|---|
+| **Layer 0 — Sync faithfulness gate** | Are answer claims grounded in retrieved context? (0.0–1.0) | Before delivery | Adds ~300ms; sets `low_confidence=True` if score < 0.7 |
+| **Layer 1 — RAGAS metrics** | Faithfulness (reused), answer relevance, context precision (0.0–1.0) | After delivery | None |
+| **Layer 2 — LLM-as-a-Judge** | Correctness, completeness, groundedness, clarity (1–5) | After delivery | None |
+| **Layer 3 — Human review flag** | Responses below threshold flagged in Langfuse for review | After delivery | None |
+| **Layer 4 — User feedback** | Thumbs-up / thumbs-down from end users (`POST /feedback`) | On user action | None |
+
+**Low confidence flag:** When Layer 0 fires, the API response includes `"low_confidence": true` and the frontend displays an amber `⚠ low confidence` badge on the message. The faithfulness score is passed to the async evaluator so it is not computed twice.
+
+**Visual queries are exempt** from the sync gate — VLM answers are not grounded in text chunks, so faithfulness scoring would always produce false positives.
 
 ---
 
