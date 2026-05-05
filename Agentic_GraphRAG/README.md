@@ -1,12 +1,12 @@
-# Conduit Graph RAG Agent
+# heyDonto Graph RAG Agent
 
-An intelligent question-answering agent built for **Conduit** — the dental healthcare interoperability platform by [HeyDonto AI Technology](https://www.heydonto.com). The agent combines a **Knowledge Graph** (Neo4j), a **Vector Database** (ChromaDB), and a **Vision Language Model** (Claude Vision) to answer complex questions about patients, referrals, prior authorizations, FHIR standards, and clinical documents, things that flat vector search alone cannot handle.
+An intelligent question-answering agent built for **heyDonto** — the dental healthcare interoperability platform by [HeyDonto AI Technology](https://www.heydonto.com). The agent combines a **Knowledge Graph** (Neo4j), a **Vector Database** (ChromaDB), and a **Vision Language Model** (Claude Vision) to answer complex questions about patients, referrals, prior authorizations, FHIR standards, and clinical documents, things that flat vector search alone cannot handle.
 
 ---
 
 ## Why This Project Exists
 
-Dental data has always been isolated from the rest of healthcare. Conduit solves this by connecting dental practice management systems (PMS) to medical EHRs, payers, patients, and AI platforms through a single FHIR R4 bridge.
+Dental data has always been isolated from the rest of healthcare. heyDonto solves this by connecting dental practice management systems (PMS) to medical EHRs, payers, patients, and AI platforms through a single FHIR R4 bridge.
 
 Operating at this intersection produces deeply relational, multi-system data:
 
@@ -25,7 +25,7 @@ This agent can — because it uses a **Knowledge Graph** to traverse entity rela
 
 ## Production Purpose
 
-In production, this agent serves as the **AI assistant layer on top of Conduit's interoperability platform**. It is built for:
+In production, this agent serves as the **AI assistant layer on top of heyDonto's interoperability platform**. It is built for:
 
 | User | How They Use It |
 |---|---|
