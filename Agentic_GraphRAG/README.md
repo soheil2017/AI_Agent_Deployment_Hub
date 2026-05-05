@@ -44,37 +44,37 @@ In production, this agent serves as the **AI assistant layer on top of Conduit's
                          User Query (text or image)
                                     │
                          ┌──────────▼──────────┐
-                         │    FastAPI  main.py  │
-                         │    POST /query       │
+                         │    FastAPI  main.py │
+                         │    POST /query      │
                          └──────────┬──────────┘
                                     │
                          ┌──────────▼──────────┐
-                         │   LangGraph Agent    │
-                         │                      │
-                         │  1. classify_query   │  ← decides which tool to use
-                         │  2. run_tools        │  ← calls the right tool(s)
-                         │  3. generate         │  ← builds the final answer
-                         │  4. no_answer        │  ← fallback if nothing found
+                         │   LangGraph Agent   │
+                         │                     │
+                         │  1. classify_query  │  ← decides which tool to use
+                         │  2. run_tools       │  ← calls the right tool(s)
+                         │  3. generate        │  ← builds the final answer
+                         │  4. no_answer       │  ← fallback if nothing found
                          └──┬──────┬────────┬──┘
                             │      │        │
                ┌────────────▼─┐ ┌──▼───┐ ┌─▼──────────────┐
-               │   Neo4j      │ │Chroma│ │  Claude Vision  │
-               │  Graph DB    │ │  DB  │ │     (VLM)       │
-               │              │ │      │ │                 │
-               │  WHO relates │ │ WHAT │ │  WHAT is in     │
-               │  to WHO      │ │ docs │ │  this image     │
-               └──────────────┘ └──────┘ └─────────────────┘
+               │   Neo4j      │ │Chroma│ │  Claude Vision │
+               │  Graph DB    │ │  DB  │ │     (VLM)      │
+               │              │ │      │ │                │
+               │  WHO relates │ │ WHAT │ │  WHAT is in    │
+               │  to WHO      │ │ docs │ │  this image    │
+               └──────────────┘ └──────┘ └────────────────┘
                             │      │        │
                          ┌──▼──────▼────────▼──┐
-                         │     OpenAI LLM       │
-                         │   (final answer)     │
+                         │     OpenAI LLM      │
+                         │   (final answer)    │
                          └─────────────────────┘
                                     │
                          ┌──────────▼──────────┐
-                         │      Langfuse        │
-                         │   Observability      │
-                         │  traces · spans ·    │
-                         │  scores · feedback   │
+                         │      Langfuse       │
+                         │   Observability     │
+                         │  traces · spans ·   │
+                         │  scores · feedback  │
                          └─────────────────────┘
 ```
 
