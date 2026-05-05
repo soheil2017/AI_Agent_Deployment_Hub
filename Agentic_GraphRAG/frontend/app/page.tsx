@@ -116,7 +116,7 @@ export default function Home() {
       {/* Header */}
       <div style={{ padding: '24px 0 16px', borderBottom: '1px solid #1e293b' }}>
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: '#38bdf8' }}>
-          Conduit Graph RAG
+          HeyDonto AI Assistant
         </h1>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
           Dental healthcare knowledge graph · Neo4j + ChromaDB + Claude Vision
