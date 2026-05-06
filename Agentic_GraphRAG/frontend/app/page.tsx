@@ -44,15 +44,22 @@ export default function Home() {
   function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    setImageMediaType(file.type || 'image/jpeg')
     setImagePreview(URL.createObjectURL(file))
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result as string
-      // Strip "data:image/jpeg;base64," prefix
-      setImageBase64(result.split(',')[1])
+
+    // Resize large images before base64-encoding to avoid Railway's body size limit
+    const MAX_PX = 1024
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      const scale = Math.min(1, MAX_PX / Math.max(img.width, img.height))
+      canvas.width  = Math.round(img.width  * scale)
+      canvas.height = Math.round(img.height * scale)
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+      setImageMediaType('image/jpeg')
+      setImageBase64(dataUrl.split(',')[1])
     }
-    reader.readAsDataURL(file)
+    img.src = URL.createObjectURL(file)
   }
 
   function clearImage() {
@@ -79,6 +86,7 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60000),  // 60s — VLM calls can be slow
       })
       if (!res.ok) {
         const text = await res.text()
