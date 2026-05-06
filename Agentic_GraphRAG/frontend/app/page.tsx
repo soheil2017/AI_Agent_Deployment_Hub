@@ -80,6 +80,10 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`Server error ${res.status}: ${text.slice(0, 200)}`)
+      }
       const data = await res.json()
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -88,10 +92,10 @@ export default function Home() {
         traceId: data.trace_id,
         lowConfidence: data.low_confidence,
       }])
-    } catch {
+    } catch (err) {
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: 'Error: could not reach the API.',
+        content: `Error: ${err instanceof Error ? err.message : 'could not reach the API.'}`,
       }])
     } finally {
       setLoading(false)
